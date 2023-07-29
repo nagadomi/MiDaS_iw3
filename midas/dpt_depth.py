@@ -134,7 +134,12 @@ class DPT(BaseModel):
         if self.scratch.stem_transpose is not None:
             path_1 = self.scratch.stem_transpose(path_1)
 
-        out = self.scratch.output_conv(path_1)
+        if path_1.dtype == torch.float16:
+            with torch.autocast(device_type=path_1.device.type, dtype=torch.float32):
+                out = self.scratch.output_conv(path_1)
+            out = out.to(torch.float16)
+        else:
+            out = self.scratch.output_conv(path_1)
 
         return out
 
