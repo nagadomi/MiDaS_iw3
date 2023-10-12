@@ -1,6 +1,6 @@
 import torch
-
 import torch.nn as nn
+from collections import defaultdict
 
 
 class Slice(nn.Module):
@@ -50,32 +50,33 @@ class Transpose(nn.Module):
         return x
 
 
-activations = {}
+activations = defaultdict(lambda: {})
 
 
 def get_activation(name):
     def hook(model, input, output):
-        activations[name] = output
+        device_key = str(input[0].device)
+        activations[device_key][name] = output
 
     return hook
 
 
 def forward_default(pretrained, x, function_name="forward_features"):
     exec(f"pretrained.model.{function_name}(x)")
-
-    layer_1 = pretrained.activations["1"]
-    layer_2 = pretrained.activations["2"]
-    layer_3 = pretrained.activations["3"]
-    layer_4 = pretrained.activations["4"]
+    device_key = str(x.device)
+    layer_1 = pretrained.activations[device_key]["1"]
+    layer_2 = pretrained.activations[device_key]["2"]
+    layer_3 = pretrained.activations[device_key]["3"]
+    layer_4 = pretrained.activations[device_key]["4"]
 
     if hasattr(pretrained, "act_postprocess1"):
-        layer_1 = pretrained.act_postprocess1(layer_1)
+        layer_1 = pretrained.act_postprocess1(layer_1.to(x.device))
     if hasattr(pretrained, "act_postprocess2"):
-        layer_2 = pretrained.act_postprocess2(layer_2)
+        layer_2 = pretrained.act_postprocess2(layer_2.to(x.device))
     if hasattr(pretrained, "act_postprocess3"):
-        layer_3 = pretrained.act_postprocess3(layer_3)
+        layer_3 = pretrained.act_postprocess3(layer_3.to(x.device))
     if hasattr(pretrained, "act_postprocess4"):
-        layer_4 = pretrained.act_postprocess4(layer_4)
+        layer_4 = pretrained.act_postprocess4(layer_4.to(x.device))
 
     return layer_1, layer_2, layer_3, layer_4
 
@@ -84,11 +85,11 @@ def forward_adapted_unflatten(pretrained, x, function_name="forward_features"):
     b, c, h, w = x.shape
 
     exec(f"glob = pretrained.model.{function_name}(x)")
-
-    layer_1 = pretrained.activations["1"]
-    layer_2 = pretrained.activations["2"]
-    layer_3 = pretrained.activations["3"]
-    layer_4 = pretrained.activations["4"]
+    device_key = str(x.device)
+    layer_1 = pretrained.activations[device_key]["1"].to(x.device)
+    layer_2 = pretrained.activations[device_key]["2"].to(x.device)
+    layer_3 = pretrained.activations[device_key]["3"].to(x.device)
+    layer_4 = pretrained.activations[device_key]["4"].to(x.device)
 
     layer_1 = pretrained.act_postprocess1[0:2](layer_1)
     layer_2 = pretrained.act_postprocess2[0:2](layer_2)
