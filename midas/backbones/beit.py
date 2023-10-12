@@ -6,7 +6,7 @@ import numpy as np
 import torch.nn.functional as F
 
 from .utils import forward_adapted_unflatten, make_backbone_default
-from timm.models.beit import gen_relative_position_index
+from timm.models.beit import gen_relative_position_index, Beit, Block, Attention
 from torch.utils.checkpoint import checkpoint
 from typing import Optional
 
@@ -78,7 +78,7 @@ def attention_forward(self, x, resolution, shared_rel_pos_bias: Optional[torch.T
 
     if self.relative_position_bias_table is not None:
         window_size = (resolution[0] // 16, resolution[1] // 16)
-        attn = attn + self._get_rel_pos_bias(window_size)
+        attn = attn + _get_rel_pos_bias(self, window_size)
     if shared_rel_pos_bias is not None:
         attn = attn + shared_rel_pos_bias
 
@@ -114,7 +114,7 @@ def beit_forward_features(self, x):
     """
     resolution = x.shape[2:]
 
-    x = self.patch_embed(x)
+    x = patch_embed_forward(self.patch_embed, x)
     x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
     if self.pos_embed is not None:
         x = x + self.pos_embed
@@ -130,6 +130,21 @@ def beit_forward_features(self, x):
     return x
 
 
+class BeitMod(Beit):
+    def forward_features(self, x):
+        return beit_forward_features(self, x)
+
+
+class AttentionMod(Attention):
+    def forward(self, x, resolution, shared_rel_pos_bias: Optional[torch.Tensor] = None):
+        return attention_forward(self, x, resolution, shared_rel_pos_bias)
+
+
+class BlockMod(Block):
+    def forward(self, x, resolution, shared_rel_pos_bias: Optional[torch.Tensor] = None):
+        return block_forward(self, x, resolution, shared_rel_pos_bias)
+
+
 def _make_beit_backbone(
         model,
         features=[96, 192, 384, 768],
@@ -142,17 +157,13 @@ def _make_beit_backbone(
 ):
     backbone = make_backbone_default(model, features, size, hooks, vit_features, use_readout, start_index,
                                      start_index_readout)
-
-    backbone.model.patch_embed.forward = types.MethodType(patch_embed_forward, backbone.model.patch_embed)
-    backbone.model.forward_features = types.MethodType(beit_forward_features, backbone.model)
+    backbone.model.__class__ = BeitMod
 
     for block in backbone.model.blocks:
         attn = block.attn
-        attn._get_rel_pos_bias = types.MethodType(_get_rel_pos_bias, attn)
-        attn.forward = types.MethodType(attention_forward, attn)
+        attn.__class__ = AttentionMod
         attn.relative_position_indices = {}
-
-        block.forward = types.MethodType(block_forward, block)
+        block.__class__ = BlockMod
 
     return backbone
 
