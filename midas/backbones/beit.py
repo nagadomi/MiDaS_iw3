@@ -26,10 +26,15 @@ def patch_embed_forward(self, x):
     return x
 
 
-def _get_rel_pos_bias(self, window_size):
+def _get_rel_pos_bias(self, window_size, device):
     """
     Modification of timm.models.beit.py: Attention._get_rel_pos_bias to support arbitrary window sizes.
     """
+    # key = str(device) + ":" + str(window_size[1]) + "," + str(window_size[0])
+    key = str(window_size[1]) + "," + str(window_size[0])
+    if key in self.rel_pos_bias_cache:
+        return self.rel_pos_bias_cache[key].to(device)
+
     old_height = 2 * self.window_size[0] - 1
     old_width = 2 * self.window_size[1] - 1
 
@@ -50,7 +55,6 @@ def _get_rel_pos_bias(self, window_size):
     new_relative_position_bias_table = torch.cat(
         [new_sub_table, old_relative_position_bias_table[old_num_relative_distance - 3:]])
 
-    key = str(window_size[1]) + "," + str(window_size[0])
     if key not in self.relative_position_indices.keys():
         self.relative_position_indices[key] = gen_relative_position_index(window_size)
 
@@ -59,7 +63,8 @@ def _get_rel_pos_bias(self, window_size):
         window_size[0] * window_size[1] + 1,
         window_size[0] * window_size[1] + 1, -1)  # Wh*Ww,Wh*Ww,nH
     relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-    return relative_position_bias.unsqueeze(0)
+    self.rel_pos_bias_cache[key] = relative_position_bias.unsqueeze(0)
+    return self.rel_pos_bias_cache[key].to(device)
 
 
 def attention_forward(self, x, resolution, shared_rel_pos_bias: Optional[torch.Tensor] = None):
@@ -78,7 +83,7 @@ def attention_forward(self, x, resolution, shared_rel_pos_bias: Optional[torch.T
 
     if self.relative_position_bias_table is not None:
         window_size = (resolution[0] // 16, resolution[1] // 16)
-        attn = attn + _get_rel_pos_bias(self, window_size)
+        attn = attn + _get_rel_pos_bias(self, window_size, x.device)
     if shared_rel_pos_bias is not None:
         attn = attn + shared_rel_pos_bias
 
@@ -163,6 +168,7 @@ def _make_beit_backbone(
         attn = block.attn
         attn.__class__ = AttentionMod
         attn.relative_position_indices = {}
+        attn.rel_pos_bias_cache = {}
         block.__class__ = BlockMod
 
     return backbone
