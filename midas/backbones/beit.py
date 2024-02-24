@@ -34,6 +34,8 @@ def _get_rel_pos_bias(self, window_size, device):
     key = str(window_size[1]) + "," + str(window_size[0])
     if key in self.rel_pos_bias_cache:
         return self.rel_pos_bias_cache[key].to(device)
+    # keep only 1 cache
+    self.rel_pos_bias_cache.clear()
 
     old_height = 2 * self.window_size[0] - 1
     old_width = 2 * self.window_size[1] - 1
