@@ -11,6 +11,9 @@ from torch.utils.checkpoint import checkpoint
 from typing import Optional
 
 
+HAS_SPDA = hasattr(F, "scaled_dot_product_attention")
+
+
 def forward_beit(pretrained, x):
     return forward_adapted_unflatten(pretrained, x, "forward_features")
 
@@ -79,20 +82,35 @@ def attention_forward(self, x, resolution, shared_rel_pos_bias: Optional[torch.T
     qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
     qkv = qkv.reshape(B, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
     q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
-
     q = q * self.scale
-    attn = (q @ k.transpose(-2, -1))
 
-    if self.relative_position_bias_table is not None:
-        window_size = (resolution[0] // 16, resolution[1] // 16)
-        attn = attn + _get_rel_pos_bias(self, window_size, x.device)
-    if shared_rel_pos_bias is not None:
-        attn = attn + shared_rel_pos_bias
+    if HAS_SPDA:
+        rel_pos_bias = None
+        if self.relative_position_bias_table is not None:
+            window_size = (resolution[0] // 16, resolution[1] // 16)
+            rel_pos_bias =  _get_rel_pos_bias(self, window_size, x.device)
+        if shared_rel_pos_bias is not None:
+            rel_pos_bias = shared_rel_pos_bias
+        x = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=rel_pos_bias,
+            # https://github.com/pytorch/pytorch/issues/124464
+            dropout_p=self.attn_drop.p if self.training else 0.,
+            scale=1.0,
+        )
+    else:
+        attn = (q @ k.transpose(-2, -1))
 
-    attn = attn.softmax(dim=-1)
-    attn = self.attn_drop(attn)
+        if self.relative_position_bias_table is not None:
+            window_size = (resolution[0] // 16, resolution[1] // 16)
+            attn = attn + _get_rel_pos_bias(self, window_size, x.device)
+        if shared_rel_pos_bias is not None:
+            attn = attn + shared_rel_pos_bias
 
-    x = (attn @ v).transpose(1, 2).reshape(B, N, -1)
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        x = attn @ v
+
+    x = x.transpose(1, 2).reshape(B, N, -1)
     x = self.proj(x)
     x = self.proj_drop(x)
     return x
