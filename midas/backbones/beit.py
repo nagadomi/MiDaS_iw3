@@ -11,7 +11,7 @@ from torch.utils.checkpoint import checkpoint
 from typing import Optional
 
 
-HAS_SPDA = hasattr(F, "scaled_dot_product_attention")
+HAS_SDPA = hasattr(F, "scaled_dot_product_attention")
 
 
 def forward_beit(pretrained, x):
@@ -84,7 +84,7 @@ def attention_forward(self, x, resolution, shared_rel_pos_bias: Optional[torch.T
     q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
     q = q * self.scale
 
-    if HAS_SPDA:
+    if HAS_SDPA:
         rel_pos_bias = None
         if self.relative_position_bias_table is not None:
             window_size = (resolution[0] // 16, resolution[1] // 16)
